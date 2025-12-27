@@ -31,7 +31,7 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
         for param_group in optimizer.param_groups:
             param_group['lr'] = lr
 
-        with autocast_ctx:
+        with autocast_ctx:#混合精度上下文
             res = model(X)
             loss = loss_fct(
                 res.logits.view(-1, res.logits.size(-1)),
@@ -43,16 +43,16 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             loss = loss / args.accumulation_steps
 
         scaler.scale(loss).backward()
-
+        #反向传播和优化
         if (step + 1) % args.accumulation_steps == 0:
-            scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)
+            scaler.unscale_(optimizer)#取消缩放
+            torch.nn.utils.clip_grad_norm_(model.parameters(), args.grad_clip)#梯度裁剪
 
-            scaler.step(optimizer)
-            scaler.update()
+            scaler.step(optimizer)#更新优化器
+            scaler.update()#更新缩放器
 
-            optimizer.zero_grad(set_to_none=True)
-            torch.cuda.empty_cache()
+            optimizer.zero_grad(set_to_none=True)#清空梯度
+            torch.cuda.empty_cache()#清空缓存
 
         if step % args.log_interval == 0 or step == iters - 1:
             spend_time = time.time() - start_time
@@ -61,9 +61,10 @@ def train_epoch(epoch, loader, iters, start_step=0, wandb=None):
             eta_min = spend_time / (step + 1) * iters // 60 - spend_time // 60
             
             Logger(f'Epoch:[{epoch+1}/{args.epochs}]({step}/{iters}) loss:{current_loss:.6f} lr:{current_lr:.12f} epoch_Time:{eta_min}min:')
-            
-            if wandb: wandb.log({"loss": current_loss, "lr": current_lr, "epoch_Time": eta_min})
+           
 
+            if wandb: wandb.log({"loss": current_loss, "lr": current_lr, "epoch_Time": eta_min})
+        #模型保存checkpoint
         if (step % args.save_interval == 0 or step == iters - 1) and is_main_process():
             model.eval()
             moe_suffix = '_moe' if lm_config.use_moe else ''
@@ -107,7 +108,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     # ========== 1. 初始化环境和随机种子 ==========
-    local_rank = init_distributed_mode()
+    local_rank = init_distributed_mode()#初始化分布式训练
     if dist.is_initialized(): args.device = f"cuda:{local_rank}"
     setup_seed(42 + (dist.get_rank() if dist.is_initialized() else 0))
     
@@ -119,7 +120,7 @@ if __name__ == "__main__":
     # ========== 3. 设置混合精度 ==========
     device_type = "cuda" if "cuda" in args.device else "cpu"
     dtype = torch.bfloat16 if args.dtype == "bfloat16" else torch.float16
-    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)
+    autocast_ctx = nullcontext() if device_type == "cpu" else torch.cuda.amp.autocast(dtype=dtype)#配置上下文管理器
     
     # ========== 4. 配wandb ==========
     wandb = None
